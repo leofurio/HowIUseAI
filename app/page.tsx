@@ -338,11 +338,21 @@ function ReportView({ report }: { report: AnalysisReport }) {
         {report.commitAnalysis.available ? (
           <CommitSection report={report} />
         ) : (
-          <p className="muted">
-            Cronologia non disponibile per questa analisi (upload ZIP oppure API del provider non
-            raggiungibile). Analizzando un URL GitHub/GitLab/Bitbucket la cronologia viene inclusa
-            automaticamente.
-          </p>
+          <>
+            {report.commitAnalysis.aiBranches.length > 0 && (
+              <div className="notice" style={{ marginBottom: 12 }}>
+                <strong>
+                  {report.commitAnalysis.aiBranches.length} branch con nomi da strumenti AI:
+                </strong>{" "}
+                {report.commitAnalysis.aiBranches.slice(0, 6).map((b) => b.name).join(", ")}
+              </div>
+            )}
+            <p className="muted">
+              Cronologia non disponibile per questa analisi (upload ZIP oppure API del provider non
+              raggiungibile). Analizzando un URL GitHub/GitLab/Bitbucket la cronologia viene inclusa
+              automaticamente.
+            </p>
+          </>
         )}
       </section>
     </>
@@ -373,7 +383,28 @@ function CommitSection({ report }: { report: AnalysisReport }) {
           <div className="value">{ca.aiSignedCommits}</div>
           <div className="label">commit con firma AI esplicita</div>
         </div>
+        <div className="kpi">
+          <div className="value">
+            {ca.aiBranches.length}
+            {ca.totalBranches !== null ? ` / ${ca.totalBranches}` : ""}
+          </div>
+          <div className="label">branch con nomi da strumenti AI</div>
+        </div>
       </div>
+
+      {ca.aiBranches.length > 0 && (
+        <div className="notice" style={{ marginBottom: 16 }}>
+          <strong>Branch riconducibili a strumenti AI:</strong>
+          <ul style={{ paddingLeft: 18, marginTop: 4 }}>
+            {ca.aiBranches.slice(0, 10).map((b) => (
+              <li key={b.name}>
+                <code>{b.name}</code> — {b.tool}
+              </li>
+            ))}
+            {ca.aiBranches.length > 10 && <li>… e altri {ca.aiBranches.length - 10}</li>}
+          </ul>
+        </div>
+      )}
 
       {ca.anomalies.length > 0 && (
         <div className="notice" style={{ marginBottom: 16 }}>

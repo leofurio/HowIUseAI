@@ -2,10 +2,84 @@
 // (nessun clone necessario) e cerca anomalie compatibili con generazione
 // massiva di codice. Disponibile solo per analisi da URL, non da ZIP.
 
-import { CommitAnalysis, CommitInfo } from "./types";
+import { AiBranch, CommitAnalysis, CommitInfo } from "./types";
 import { RepoRef } from "./acquisition";
 
 const MAX_COMMITS = 300;
+const MAX_BRANCH_PAGES = 3; // 100 branch per pagina
+
+// Prefissi/pattern di branch creati dagli strumenti di coding AI.
+const AI_BRANCH_PATTERNS: { pattern: RegExp; tool: string }[] = [
+  { pattern: /^claude([\/_-]|$)/i, tool: "Claude Code" },
+  { pattern: /^copilot([\/_-]|$)/i, tool: "GitHub Copilot" },
+  { pattern: /^codex([\/_-]|$)/i, tool: "OpenAI Codex" },
+  { pattern: /^cursor([\/_-]|$)/i, tool: "Cursor" },
+  { pattern: /^aider([\/_-]|$)/i, tool: "Aider" },
+  { pattern: /^devin([\/_-]|$)/i, tool: "Devin" },
+  { pattern: /^sweep([\/_-]|$)/i, tool: "Sweep" },
+  { pattern: /^openhands([\/_-]|$)/i, tool: "OpenHands" },
+  { pattern: /^windsurf([\/_-]|$)/i, tool: "Windsurf" },
+  { pattern: /^jules([\/_-]|$)/i, tool: "Jules" },
+  { pattern: /^(gpt|chatgpt)([\/_-]|$)/i, tool: "ChatGPT" },
+  { pattern: /ai[-_]?generated/i, tool: "generico (ai-generated)" },
+];
+
+export function matchAiBranch(name: string): AiBranch | null {
+  for (const { pattern, tool } of AI_BRANCH_PATTERNS) {
+    if (pattern.test(name)) return { name, tool };
+  }
+  return null;
+}
+
+async function fetchBranchNames(ref: RepoRef): Promise<string[] | null> {
+  try {
+    const names: string[] = [];
+    if (ref.provider === "github") {
+      const headers: Record<string, string> = {
+        "User-Agent": "ai-code-usage-analyzer",
+        Accept: "application/vnd.github+json",
+      };
+      if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+      for (let page = 1; page <= MAX_BRANCH_PAGES; page++) {
+        const res = await fetch(
+          `https://api.github.com/repos/${ref.owner}/${ref.repo}/branches?per_page=100&page=${page}`,
+          { headers }
+        );
+        if (!res.ok) return page === 1 ? null : names;
+        const batch = (await res.json()) as any[];
+        names.push(...batch.map((b) => String(b.name)));
+        if (batch.length < 100) break;
+      }
+    } else if (ref.provider === "gitlab") {
+      const headers: Record<string, string> = { "User-Agent": "ai-code-usage-analyzer" };
+      if (process.env.GITLAB_TOKEN) headers["PRIVATE-TOKEN"] = process.env.GITLAB_TOKEN;
+      const id = encodeURIComponent(`${ref.owner}/${ref.repo}`);
+      for (let page = 1; page <= MAX_BRANCH_PAGES; page++) {
+        const res = await fetch(
+          `https://gitlab.com/api/v4/projects/${id}/repository/branches?per_page=100&page=${page}`,
+          { headers }
+        );
+        if (!res.ok) return page === 1 ? null : names;
+        const batch = (await res.json()) as any[];
+        names.push(...batch.map((b) => String(b.name)));
+        if (batch.length < 100) break;
+      }
+    } else {
+      let url: string | null =
+        `https://api.bitbucket.org/2.0/repositories/${ref.owner}/${ref.repo}/refs/branches?pagelen=100`;
+      for (let page = 0; page < MAX_BRANCH_PAGES && url; page++) {
+        const res = await fetch(url, { headers: { "User-Agent": "ai-code-usage-analyzer" } });
+        if (!res.ok) return page === 0 ? null : names;
+        const data = (await res.json()) as any;
+        names.push(...(data.values ?? []).map((b: any) => String(b.name)));
+        url = data.next ?? null;
+      }
+    }
+    return names;
+  } catch {
+    return null;
+  }
+}
 
 const GENERIC_MESSAGE_PATTERNS: RegExp[] = [
   /^(update|updates|updated)( .{0,20})?$/i,
@@ -27,6 +101,8 @@ function emptyAnalysis(): CommitAnalysis {
   return {
     available: false,
     source: null,
+    totalBranches: null,
+    aiBranches: [],
     totalCommits: 0,
     truncated: false,
     authors: [],
@@ -120,25 +196,33 @@ async function fetchBitbucketCommits(ref: RepoRef, branch: string): Promise<RawC
   return commits;
 }
 
-/** Analizza la cronologia commit del repository (best effort, mai bloccante). */
+/** Analizza la cronologia commit e i branch del repository (best effort, mai bloccante). */
 export async function analyzeCommits(ref: RepoRef, branch: string): Promise<CommitAnalysis> {
   let raw: RawCommit[] = [];
   let source = "";
+  let branchNames: string[] | null = null;
   try {
-    if (ref.provider === "github") {
-      raw = await fetchGitHubCommits(ref, branch);
-      source = "GitHub API";
-    } else if (ref.provider === "gitlab") {
-      raw = await fetchGitLabCommits(ref, branch);
-      source = "GitLab API";
-    } else {
-      raw = await fetchBitbucketCommits(ref, branch);
-      source = "Bitbucket API";
-    }
+    const commitsPromise =
+      ref.provider === "github"
+        ? fetchGitHubCommits(ref, branch)
+        : ref.provider === "gitlab"
+          ? fetchGitLabCommits(ref, branch)
+          : fetchBitbucketCommits(ref, branch);
+    source =
+      ref.provider === "github" ? "GitHub API" : ref.provider === "gitlab" ? "GitLab API" : "Bitbucket API";
+    [raw, branchNames] = await Promise.all([commitsPromise, fetchBranchNames(ref)]);
   } catch {
     return emptyAnalysis();
   }
-  if (raw.length === 0) return emptyAnalysis();
+
+  const aiBranches = (branchNames ?? [])
+    .map(matchAiBranch)
+    .filter((b): b is AiBranch => b !== null)
+    .slice(0, 30);
+
+  if (raw.length === 0) {
+    return { ...emptyAnalysis(), totalBranches: branchNames?.length ?? null, aiBranches };
+  }
 
   const authorCount = new Map<string, number>();
   const timeline = new Map<string, number>();
@@ -158,6 +242,12 @@ export async function analyzeCommits(ref: RepoRef, branch: string): Promise<Comm
   }
 
   const anomalies: string[] = [];
+  if (aiBranches.length > 0) {
+    const tools = [...new Set(aiBranches.map((b) => b.tool))].join(", ");
+    anomalies.push(
+      `${aiBranches.length} branch con nomi tipici degli strumenti AI (${tools}): es. "${aiBranches[0].name}".`
+    );
+  }
   if (aiSigned > 0) {
     anomalies.push(
       `${aiSigned} commit contengono firme esplicite di strumenti AI (es. "Co-Authored-By: Claude").`
@@ -185,6 +275,8 @@ export async function analyzeCommits(ref: RepoRef, branch: string): Promise<Comm
   return {
     available: true,
     source,
+    totalBranches: branchNames?.length ?? null,
+    aiBranches,
     totalCommits: raw.length,
     truncated: raw.length >= MAX_COMMITS,
     authors: [...authorCount.entries()]

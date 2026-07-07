@@ -61,9 +61,19 @@ export interface CommitInfo {
   filesChanged: number | null;
 }
 
+export interface AiBranch {
+  name: string;
+  /** strumento AI riconosciuto dal prefisso del nome (es. "Claude", "Copilot") */
+  tool: string;
+}
+
 export interface CommitAnalysis {
   available: boolean;
   source: string | null; // es. "GitHub API"
+  /** Numero totale di branch del repository (null se non recuperabile) */
+  totalBranches: number | null;
+  /** Branch con nomi tipici degli strumenti AI (claude/…, copilot/…, codex/…) */
+  aiBranches: AiBranch[];
   totalCommits: number;
   truncated: boolean;
   authors: { name: string; commits: number }[];
