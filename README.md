@@ -19,6 +19,7 @@ Web application che stima **quanta parte del codice di un repository è stata pr
   - docstring molto formali.
 - **Analisi AI opzionale via OpenRouter**: i file con score statico più alto vengono sottoposti a un LLM per una seconda valutazione semantica, con motivazione. Lo score finale combina 60% analisi statica e 40% analisi AI; nel report è sempre indicato quali risultati derivano dall'una e dall'altra.
 - **Analisi cronologia Git** (per analisi da URL): numero di commit, autori, distribuzione temporale, messaggi generici, firme AI esplicite (`Co-Authored-By: Claude` ecc.), burst anomali di commit compatibili con generazione massiva.
+- **Analisi dei nomi dei branch** (per analisi da URL): i branch creati dagli strumenti di coding AI hanno prefissi riconoscibili (`claude/…`, `copilot/…`, `codex/…`, `cursor/…`, `devin/…`, ecc.); la loro presenza viene segnalata come anomalia e contribuisce alla stima complessiva.
 - **Dashboard** con KPI, donut quota AI/manuale, grafici per linguaggio e per cartella, tabella file con dettaglio espandibile (score, rischio, motivazioni, suggerimenti di revisione).
 - **Export report** in PDF e CSV (apribile in Excel).
 

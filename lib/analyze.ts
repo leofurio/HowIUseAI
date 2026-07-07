@@ -80,8 +80,13 @@ function computeConfidence(
 
 /** Applica i segnali della cronologia commit come correttivo dello score complessivo. */
 function commitAdjustment(commitAnalysis: CommitAnalysis): number {
-  if (!commitAnalysis.available) return 0;
   let adj = 0;
+  // I branch con nomi da AI tool sono un segnale forte anche quando la
+  // cronologia commit non è disponibile.
+  if (commitAnalysis.aiBranches.length > 0) {
+    adj += Math.min(10, commitAnalysis.aiBranches.length * 3);
+  }
+  if (!commitAnalysis.available) return Math.min(20, adj);
   if (commitAnalysis.aiSignedCommits > 0) {
     adj += Math.min(15, commitAnalysis.aiSignedCommits * 3);
   }

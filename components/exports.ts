@@ -29,6 +29,10 @@ export function exportCsv(report: AnalysisReport) {
     ["File analizzati", report.totalFiles],
     ["Righe analizzate", report.totalLines],
     ["Analisi AI (OpenRouter)", report.aiAnalysisUsed ? `sì (${report.aiModel})` : "no (solo analisi statica)"],
+    [
+      "Branch con nomi da strumenti AI",
+      report.commitAnalysis.aiBranches.map((b) => `${b.name} (${b.tool})`).join(" | ") || "nessuno rilevato",
+    ],
     [],
     ["Percorso", "Linguaggio", "Righe", "Score statico", "Score AI", "Score finale", "Rischio", "Motivazioni"],
     ...report.files.map((f) => [
@@ -118,6 +122,12 @@ export async function exportPdf(report: AnalysisReport) {
         ["Autori principali", report.commitAnalysis.authors.slice(0, 5).map((a) => `${a.name} (${a.commits})`).join(", ")],
         ["Messaggi generici", `${Math.round(report.commitAnalysis.genericMessageRatio * 100)}%`],
         ["Commit con firma AI", String(report.commitAnalysis.aiSignedCommits)],
+        [
+          "Branch con nomi da strumenti AI",
+          report.commitAnalysis.aiBranches.length > 0
+            ? report.commitAnalysis.aiBranches.map((b) => `${b.name} (${b.tool})`).join("\n")
+            : `0${report.commitAnalysis.totalBranches !== null ? ` su ${report.commitAnalysis.totalBranches}` : ""}`,
+        ],
         ["Anomalie", report.commitAnalysis.anomalies.join("\n") || "nessuna rilevata"],
       ],
       styles: { fontSize: 8, cellPadding: 1.5 },
