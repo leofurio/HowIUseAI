@@ -18,10 +18,23 @@ const AI_MODELS = [
   { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
 ];
 
+function LogoIcon() {
+  return (
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2z"
+        fill="currentColor"
+      />
+      <path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9L19 15z" fill="currentColor" opacity="0.75" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const [mode, setMode] = useState<Mode>("url");
   const [repoUrl, setRepoUrl] = useState("");
   const [zipFile, setZipFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [useAi, setUseAi] = useState(false);
   const [aiModel, setAiModel] = useState(AI_MODELS[0].id);
   const [running, setRunning] = useState(false);
@@ -87,127 +100,204 @@ export default function Home() {
     }
   }
 
+  function onZipSelected(file: File | null) {
+    if (file && !file.name.toLowerCase().endsWith(".zip")) {
+      setError("Il file deve essere un archivio .zip");
+      return;
+    }
+    setError(null);
+    setZipFile(file);
+  }
+
   const canStart = !running && (mode === "url" ? repoUrl.trim().length > 0 : zipFile !== null);
 
   return (
-    <main className="container">
-      <header style={{ marginBottom: 20 }}>
-        <h1>AI Code Usage Analyzer</h1>
-        <p className="muted" style={{ marginTop: 4 }}>
-          Stima probabilistica di quanta parte del codice di un repository è stata generata o
-          assistita da AI, sulla base di indicatori tecnici e stilistici.{" "}
-          <strong>Non è una certezza: è una stima a supporto della governance.</strong>
-        </p>
+    <>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="logo-mark">
+            <LogoIcon />
+          </div>
+          <div>
+            <div className="title">AI Code Usage Analyzer</div>
+            <div className="subtitle">IT Quality Assurance · Software Engineering Governance</div>
+          </div>
+          <span className="badge-estimate">Stima probabilistica, non certezza</span>
+        </div>
       </header>
 
-      {/* ── Input ─────────────────────────────────────────────── */}
-      <section className="card" aria-label="Sorgente da analizzare">
-        <div className="tabs" role="tablist">
-          <button
-            role="tab"
-            aria-selected={mode === "url"}
-            className={`tab ${mode === "url" ? "active" : ""}`}
-            onClick={() => setMode("url")}
-          >
-            URL repository
-          </button>
-          <button
-            role="tab"
-            aria-selected={mode === "zip"}
-            className={`tab ${mode === "zip" ? "active" : ""}`}
-            onClick={() => setMode("zip")}
-          >
-            Upload ZIP
-          </button>
-        </div>
+      <main className="container">
+        <section className="hero">
+          <h1>Quanto codice di questo repository è stato scritto dall&apos;AI?</h1>
+          <p>
+            Analizza un repository Git e ottieni una stima spiegabile, file per file, basata su
+            indicatori stilistici, cronologia dei commit, branch e attribuzione delle righe.{" "}
+            <strong>Il risultato è una probabilità, mai una prova.</strong>
+          </p>
+        </section>
 
-        {mode === "url" ? (
-          <div>
-            <label className="small" htmlFor="repo-url">
-              URL del repository (GitHub, GitLab o Bitbucket, pubblico)
-            </label>
-            <input
-              id="repo-url"
-              type="url"
-              placeholder="https://github.com/owner/repository"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              style={{ marginTop: 4 }}
-            />
+        {/* ── Input ─────────────────────────────────────────────── */}
+        <section className="card" aria-label="Sorgente da analizzare">
+          <div className="segmented" role="tablist" aria-label="Tipo di sorgente">
+            <button
+              role="tab"
+              aria-selected={mode === "url"}
+              className={`segment ${mode === "url" ? "active" : ""}`}
+              onClick={() => setMode("url")}
+            >
+              URL repository
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "zip"}
+              className={`segment ${mode === "zip" ? "active" : ""}`}
+              onClick={() => setMode("zip")}
+            >
+              Upload ZIP
+            </button>
           </div>
-        ) : (
-          <div>
-            <label className="small" htmlFor="zip-file">
-              Archivio ZIP con il codice sorgente (max ~4 MB — escludere binari e dipendenze)
-            </label>
-            <div style={{ marginTop: 6 }}>
+
+          {mode === "url" ? (
+            <div>
+              <label className="small" htmlFor="repo-url">
+                URL del repository — GitHub, GitLab o Bitbucket (pubblico, o privato con token configurato)
+              </label>
+              <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                <input
+                  id="repo-url"
+                  type="url"
+                  placeholder="https://github.com/owner/repository"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && canStart) startAnalysis();
+                  }}
+                  style={{ flex: 1, minWidth: 260 }}
+                />
+                <button className="btn-primary" onClick={startAnalysis} disabled={!canStart}>
+                  {running ? "Analisi in corso…" : "Avvia analisi"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div
+                className={`dropzone ${dragging ? "dragging" : ""}`}
+                role="button"
+                tabIndex={0}
+                aria-label="Carica un archivio ZIP"
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  onZipSelected(e.dataTransfer.files?.[0] ?? null);
+                }}
+              >
+                <div className="dz-icon" aria-hidden>
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                {zipFile ? (
+                  <>
+                    <strong>{zipFile.name}</strong>{" "}
+                    <span className="small">({(zipFile.size / 1024 / 1024).toFixed(2)} MB)</span>
+                    <div className="small" style={{ marginTop: 2 }}>
+                      Clic per sostituire il file
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>Trascina qui lo ZIP</strong> <span className="muted">oppure clicca per scegliere</span>
+                    <div className="small" style={{ marginTop: 2 }}>
+                      max ~4 MB — solo sorgenti, senza binari e dipendenze
+                    </div>
+                  </>
+                )}
+              </div>
               <input
                 ref={fileInputRef}
                 id="zip-file"
                 type="file"
                 accept=".zip"
-                onChange={(e) => setZipFile(e.target.files?.[0] ?? null)}
+                style={{ display: "none" }}
+                onChange={(e) => onZipSelected(e.target.files?.[0] ?? null)}
               />
+              <div style={{ marginTop: 14 }}>
+                <button className="btn-primary" onClick={startAnalysis} disabled={!canStart}>
+                  {running ? "Analisi in corso…" : "Avvia analisi"}
+                </button>
+              </div>
             </div>
-            {zipFile && (
-              <p className="small" style={{ marginTop: 4 }}>
-                Selezionato: {zipFile.name} ({(zipFile.size / 1024 / 1024).toFixed(2)} MB)
-              </p>
+          )}
+
+          <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 18, flexWrap: "wrap" }}>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
+              Aggiungi analisi AI via OpenRouter (opzionale)
+            </label>
+            {useAi && (
+              <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ width: "auto" }}>
+                {AI_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
             )}
           </div>
-        )}
-
-        <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.9rem" }}>
-            <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
-            Aggiungi analisi AI via OpenRouter (opzionale)
-          </label>
           {useAi && (
-            <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ width: "auto" }}>
-              {AI_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+            <p className="small" style={{ marginTop: 6 }}>
+              Richiede la variabile d&apos;ambiente <code>OPENROUTER_API_KEY</code> sul server. Senza
+              chiave, l&apos;analisi prosegue in modalità solo statica.
+            </p>
           )}
-        </div>
-        {useAi && (
-          <p className="small" style={{ marginTop: 6 }}>
-            Richiede la variabile d&apos;ambiente <code>OPENROUTER_API_KEY</code> sul server. Senza
-            chiave, l&apos;analisi prosegue in modalità solo statica.
-          </p>
-        )}
 
-        <div style={{ marginTop: 18 }}>
-          <button className="btn-primary" onClick={startAnalysis} disabled={!canStart}>
-            {running ? "Analisi in corso…" : "Avvia analisi"}
-          </button>
-        </div>
-
-        {running && (
-          <div style={{ marginTop: 16 }} aria-live="polite">
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <span className="small">{stage}</span>
-              <span className="small">{percent}%</span>
+          {running && (
+            <div style={{ marginTop: 18 }} aria-live="polite">
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span className="small">{stage}</span>
+                <span className="small" style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {percent}%
+                </span>
+              </div>
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: `${percent}%` }} />
+              </div>
             </div>
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${percent}%` }} />
+          )}
+
+          {error && (
+            <div className="error-box" style={{ marginTop: 16 }} role="alert">
+              {error}
             </div>
-          </div>
-        )}
+          )}
+        </section>
 
-        {error && (
-          <div className="error-box" style={{ marginTop: 16 }} role="alert">
-            {error}
-          </div>
-        )}
-      </section>
+        {report && <ReportView report={report} />}
 
-      {report && <ReportView report={report} />}
+        <LimitsSection />
+      </main>
 
-      <LimitsSection />
-    </main>
+      <footer className="footer">
+        <div className="footer-inner">
+          <span>
+            AI Code Usage Analyzer — supporto alla governance del software, non una prova definitiva.
+          </span>
+          <span>Analisi statica locale · AI opzionale via OpenRouter</span>
+        </div>
+      </footer>
+    </>
   );
 }
 
@@ -219,20 +309,23 @@ function ReportView({ report }: { report: AnalysisReport }) {
       {/* ── KPI ───────────────────────────────────────────────── */}
       <section className="card" aria-label="Riepilogo">
         <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <h2>
-            Riepilogo — <span className="muted">{report.source.label}</span>
-          </h2>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div>
+            <div className="kicker">Risultato</div>
+            <h2 style={{ marginBottom: 4 }}>
+              Riepilogo — <span className="muted">{report.source.label}</span>
+            </h2>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
             <button className="btn-secondary" onClick={() => exportPdf(report)}>
-              Esporta PDF
+              ⤓ PDF
             </button>
             <button className="btn-secondary" onClick={() => exportCsv(report)}>
-              Esporta CSV/Excel
+              ⤓ CSV/Excel
             </button>
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
           <AiShareDonut aiPercent={report.aiPercent} />
           <div className="kpi-grid" style={{ flex: 1, minWidth: 280 }}>
             <div className="kpi">
@@ -254,7 +347,7 @@ function ReportView({ report }: { report: AnalysisReport }) {
           </div>
         </div>
 
-        <div className="notice" style={{ marginTop: 16 }}>
+        <div className="notice" style={{ marginTop: 18 }}>
           <strong>Stima probabilistica.</strong> Non è possibile stabilire con certezza se un codice
           è stato scritto da un&apos;AI: il valore indica solo la probabilità sulla base di indicatori
           tecnici e stilistici.{" "}
@@ -269,8 +362,8 @@ function ReportView({ report }: { report: AnalysisReport }) {
           </div>
         )}
 
-        <details style={{ marginTop: 12 }}>
-          <summary className="small" style={{ cursor: "pointer" }}>
+        <details style={{ marginTop: 14 }}>
+          <summary>
             Come è stata calcolata la confidenza · file esclusi ({report.skipped.total})
           </summary>
           <ul className="small" style={{ paddingLeft: 20, marginTop: 8 }}>
@@ -297,6 +390,7 @@ function ReportView({ report }: { report: AnalysisReport }) {
 
       {/* ── Grafici ───────────────────────────────────────────── */}
       <section className="card" aria-label="Grafici">
+        <div className="kicker">Distribuzione</div>
         <div className="charts-grid">
           <div>
             <h2>Score medio per linguaggio</h2>
@@ -321,19 +415,21 @@ function ReportView({ report }: { report: AnalysisReport }) {
             />
           </div>
         </div>
-        <p className="small" style={{ marginTop: 10 }}>
+        <p className="small" style={{ marginTop: 12 }}>
           Score 0-30: probabilità bassa · 31-60: media · 61-80: alta · 81-100: molto alta.
         </p>
       </section>
 
       {/* ── Tabella file ──────────────────────────────────────── */}
       <section className="card" aria-label="File analizzati">
+        <div className="kicker">Dettaglio</div>
         <h2>File analizzati (ordinati per score)</h2>
         <FileTable files={report.files} />
       </section>
 
       {/* ── Cronologia Git ────────────────────────────────────── */}
       <section className="card" aria-label="Analisi cronologia Git">
+        <div className="kicker">Processo</div>
         <h2>Analisi cronologia Git</h2>
         {report.commitAnalysis.available ? (
           <CommitSection report={report} />
@@ -455,9 +551,7 @@ function CommitSection({ report }: { report: AnalysisReport }) {
       <TimelineChart data={ca.timeline} />
 
       <details style={{ marginTop: 12 }}>
-        <summary className="small" style={{ cursor: "pointer" }}>
-          Autori principali e ultimi commit
-        </summary>
+        <summary>Autori principali e ultimi commit</summary>
         <div className="scroll-x" style={{ marginTop: 8 }}>
           <table style={{ maxWidth: 700 }}>
             <thead>
@@ -489,7 +583,7 @@ function CommitSection({ report }: { report: AnalysisReport }) {
             <tbody>
               {ca.recentCommits.map((c) => (
                 <tr key={c.sha}>
-                  <td style={{ fontFamily: "ui-monospace, monospace" }}>{c.sha}</td>
+                  <td className="mono">{c.sha}</td>
                   <td>{c.date ? new Date(c.date).toLocaleDateString("it-IT") : "—"}</td>
                   <td>{c.author}</td>
                   <td className="muted">{c.message}</td>
@@ -506,6 +600,7 @@ function CommitSection({ report }: { report: AnalysisReport }) {
 function LimitsSection() {
   return (
     <section className="card" aria-label="Limiti dell'analisi">
+      <div className="kicker">Da leggere</div>
       <h2>Limiti dell&apos;analisi</h2>
       <ul style={{ paddingLeft: 20, display: "grid", gap: 6 }}>
         <li>
