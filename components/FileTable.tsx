@@ -183,13 +183,18 @@ function FileRow({
   return (
     <>
       <tr className="file-row" onClick={onToggle} aria-expanded={expanded}>
-        <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.82rem", wordBreak: "break-all" }}>
+        <td className="mono" style={{ wordBreak: "break-all" }}>
           {file.path}
         </td>
         <td>{file.language}</td>
         <td className="num">{file.lines.toLocaleString("it-IT")}</td>
-        <td className="num" style={{ fontWeight: 600 }}>
-          {file.score}
+        <td className="num">
+          <span className="score-cell">
+            <span className="score-bar" aria-hidden>
+              <div style={{ width: `${file.score}%` }} />
+            </span>
+            <strong>{file.score}</strong>
+          </span>
         </td>
         <td>
           <RiskChip risk={file.risk} />
