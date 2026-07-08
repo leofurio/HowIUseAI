@@ -403,6 +403,7 @@ export function analyzeFile(path: string, content: string, language: string): Fi
     indicators,
     reasons,
     aiReason: null,
+    aiLineRatio: null,
     suggestions,
   };
 }

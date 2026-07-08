@@ -39,6 +39,16 @@ function FileDetail({ file }: { file: FileAnalysis }) {
         ))}
       </ul>
 
+      {file.aiLineRatio !== null && (
+        <>
+          <p style={{ fontWeight: 600, marginBottom: 4 }}>Autori delle righe (git blame)</p>
+          <p style={{ marginBottom: 10 }}>
+            Il {Math.round(file.aiLineRatio * 100)}% delle righe di questo file proviene da commit
+            attribuiti a strumenti AI (autore o firma nel messaggio).
+          </p>
+        </>
+      )}
+
       {file.aiReason && (
         <>
           <p style={{ fontWeight: 600, marginBottom: 4 }}>Valutazione del modello AI</p>

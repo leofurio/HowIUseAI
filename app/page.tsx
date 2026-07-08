@@ -386,11 +386,44 @@ function CommitSection({ report }: { report: AnalysisReport }) {
         <div className="kpi">
           <div className="value">
             {ca.aiBranches.length}
-            {ca.totalBranches !== null ? ` / ${ca.totalBranches}` : ""}
+            {ca.totalBranches !== null ? ` / ${ca.totalBranches + ca.aiBranches.filter((b) => b.state === "chiuso").length}` : ""}
           </div>
-          <div className="label">branch con nomi da strumenti AI</div>
+          <div className="label">branch con nomi da strumenti AI (inclusi chiusi)</div>
+        </div>
+        <div className="kpi">
+          <div className="value">{Math.round(ca.aiCommitRatio * 100)}%</div>
+          <div className="label">commit da autori AI o con firma AI</div>
         </div>
       </div>
+
+      {ca.aiAuthors.length > 0 && (
+        <div className="notice" style={{ marginBottom: 16 }}>
+          <strong>Autori di commit riconducibili a strumenti AI:</strong>
+          <ul style={{ paddingLeft: 18, marginTop: 4 }}>
+            {ca.aiAuthors.slice(0, 8).map((a) => (
+              <li key={a.name}>
+                {a.name} — {a.tool} ({a.commits} commit)
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {ca.blame && (ca.blame.available || ca.blame.note) && (
+        <div className={ca.blame.available ? "notice" : "detail-box"} style={{ marginBottom: 16 }}>
+          {ca.blame.available ? (
+            <>
+              <strong>Autori delle righe (git blame)</strong> — sui {ca.blame.filesAnalyzed} file più
+              sospetti: {ca.blame.aiLines.toLocaleString("it-IT")} righe su{" "}
+              {ca.blame.totalLines.toLocaleString("it-IT")} (
+              {Math.round((ca.blame.aiLines / Math.max(1, ca.blame.totalLines)) * 100)}%) provengono da
+              commit attribuiti a strumenti AI.
+            </>
+          ) : (
+            <span className="small">{ca.blame.note}</span>
+          )}
+        </div>
+      )}
 
       {ca.aiBranches.length > 0 && (
         <div className="notice" style={{ marginBottom: 16 }}>
@@ -399,6 +432,7 @@ function CommitSection({ report }: { report: AnalysisReport }) {
             {ca.aiBranches.slice(0, 10).map((b) => (
               <li key={b.name}>
                 <code>{b.name}</code> — {b.tool}
+                {b.state === "chiuso" ? " (branch chiuso/cancellato)" : ""}
               </li>
             ))}
             {ca.aiBranches.length > 10 && <li>… e altri {ca.aiBranches.length - 10}</li>}

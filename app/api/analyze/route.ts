@@ -5,8 +5,9 @@
 //   {"type":"error","message":"..."}
 
 import { NextRequest } from "next/server";
-import { analyzeZip } from "@/lib/analyze";
-import { downloadRepoZip, parseRepoUrl } from "@/lib/acquisition";
+import { analyzeZip, recomputeReportAggregates } from "@/lib/analyze";
+import { downloadRepoZip, parseRepoUrl, RepoRef } from "@/lib/acquisition";
+import { runBlameAnalysis } from "@/lib/blame";
 import { analyzeCommits } from "@/lib/commits";
 import { StreamEvent } from "@/lib/types";
 
@@ -32,6 +33,8 @@ export async function POST(req: NextRequest) {
         let useAi = false;
         let aiModel: string | undefined;
         let commitAnalysis;
+        let repoRef: RepoRef | null = null;
+        let repoBranch = "";
 
         if (contentType.includes("multipart/form-data")) {
           // Modalità upload ZIP
@@ -59,6 +62,8 @@ export async function POST(req: NextRequest) {
           zipData = zip;
           sourceType = "url";
           sourceLabel = `${ref.label} (${branch})`;
+          repoRef = ref;
+          repoBranch = branch;
           send({ type: "progress", stage: "Analisi cronologia Git", percent: 10 });
           commitAnalysis = await analyzeCommits(ref, branch);
         }
@@ -71,6 +76,19 @@ export async function POST(req: NextRequest) {
           commitAnalysis,
           onProgress: (stage, percent) => send({ type: "progress", stage, percent }),
         });
+
+        // Analisi autori delle righe (git blame) sui file più sospetti.
+        if (repoRef) {
+          send({ type: "progress", stage: "Analisi autori delle righe (git blame)", percent: 94 });
+          await runBlameAnalysis(repoRef, repoBranch, report, (done, total) =>
+            send({
+              type: "progress",
+              stage: "Analisi autori delle righe (git blame)",
+              percent: 94 + Math.round((done / total) * 5),
+            })
+          );
+          recomputeReportAggregates(report);
+        }
 
         send({ type: "progress", stage: "Completato", percent: 100 });
         send({ type: "result", report });
