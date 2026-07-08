@@ -81,8 +81,8 @@ function computeConfidence(
 /** Applica i segnali della cronologia commit come correttivo dello score complessivo. */
 function commitAdjustment(commitAnalysis: CommitAnalysis): number {
   let adj = 0;
-  // I branch con nomi da AI tool sono un segnale forte anche quando la
-  // cronologia commit non è disponibile.
+  // I branch con nomi da AI tool (anche chiusi) sono un segnale forte pure
+  // quando la cronologia commit non è disponibile.
   if (commitAnalysis.aiBranches.length > 0) {
     adj += Math.min(10, commitAnalysis.aiBranches.length * 3);
   }
@@ -90,9 +90,37 @@ function commitAdjustment(commitAnalysis: CommitAnalysis): number {
   if (commitAnalysis.aiSignedCommits > 0) {
     adj += Math.min(15, commitAnalysis.aiSignedCommits * 3);
   }
+  // Quota di commit attribuiti ad autori AI o con firme AI nel messaggio.
+  if (commitAnalysis.aiCommitRatio > 0) {
+    adj += Math.round(Math.min(12, commitAnalysis.aiCommitRatio * 20));
+  }
   if (commitAnalysis.genericMessageRatio > 0.5) adj += 4;
   if (commitAnalysis.anomalies.some((a) => a.includes("massiva"))) adj += 4;
-  return Math.min(20, adj);
+  return Math.min(25, adj);
+}
+
+/**
+ * Ricalcola gli aggregati del report (percentuale complessiva, statistiche per
+ * linguaggio/cartella, ordinamento file). Da richiamare dopo passaggi che
+ * modificano gli score dei file (es. analisi git blame).
+ */
+export function recomputeReportAggregates(report: AnalysisReport): void {
+  const totalLines = report.files.reduce((a, f) => a + f.lines, 0);
+  const weightedScore = totalLines
+    ? report.files.reduce((a, f) => a + f.score * f.lines, 0) / totalLines
+    : 0;
+  report.aiPercent = Math.min(100, Math.round(weightedScore + commitAdjustment(report.commitAnalysis)));
+  report.manualPercent = 100 - report.aiPercent;
+  report.languages = aggregate(report.files, (f) => f.language as string).map((e) => ({
+    language: e.key,
+    files: e.files,
+    lines: e.lines,
+    avgScore: e.avgScore,
+  }));
+  report.folders = aggregate(report.files, (f) => topFolder(f.path) as string)
+    .slice(0, 12)
+    .map((e) => ({ folder: e.key, files: e.files, lines: e.lines, avgScore: e.avgScore }));
+  report.files.sort((a, b) => b.score - a.score);
 }
 
 export async function analyzeZip(zipData: ArrayBuffer, options: AnalyzeOptions): Promise<AnalysisReport> {

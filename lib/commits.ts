@@ -2,7 +2,7 @@
 // (nessun clone necessario) e cerca anomalie compatibili con generazione
 // massiva di codice. Disponibile solo per analisi da URL, non da ZIP.
 
-import { AiBranch, CommitAnalysis, CommitInfo } from "./types";
+import { AiAuthor, AiBranch, CommitAnalysis, CommitInfo } from "./types";
 import { RepoRef } from "./acquisition";
 
 const MAX_COMMITS = 300;
@@ -24,11 +24,117 @@ const AI_BRANCH_PATTERNS: { pattern: RegExp; tool: string }[] = [
   { pattern: /ai[-_]?generated/i, tool: "generico (ai-generated)" },
 ];
 
-export function matchAiBranch(name: string): AiBranch | null {
+export function matchAiBranch(name: string, state: AiBranch["state"] = "attivo"): AiBranch | null {
   for (const { pattern, tool } of AI_BRANCH_PATTERNS) {
-    if (pattern.test(name)) return { name, tool };
+    if (pattern.test(name)) return { name, tool, state };
   }
   return null;
+}
+
+// Autori di commit riconducibili a strumenti/bot di codegen AI. I bot di
+// automazione (dependabot, renovate, github-actions, vercel…) NON contano:
+// aggiornano dipendenze/config, non generano codice applicativo.
+const AI_AUTHOR_PATTERNS: { pattern: RegExp; tool: string }[] = [
+  { pattern: /\bclaude\b|anthropic/i, tool: "Claude" },
+  { pattern: /copilot/i, tool: "GitHub Copilot" },
+  { pattern: /devin/i, tool: "Devin" },
+  { pattern: /\baider\b/i, tool: "Aider" },
+  { pattern: /cursor\s*(agent|ai|\[bot\])|cursoragent/i, tool: "Cursor" },
+  { pattern: /\bcodex\b|openai/i, tool: "OpenAI Codex" },
+  { pattern: /sweep[-_ ]?ai|sweep\[bot\]/i, tool: "Sweep" },
+  { pattern: /openhands|all[-_ ]?hands/i, tool: "OpenHands" },
+  { pattern: /\bjules\b.*(bot|google)|google-labs-jules/i, tool: "Jules" },
+];
+
+const AUTOMATION_BOTS = /dependabot|renovate|github-actions|vercel|netlify|snyk|greenkeeper|imgbot|codecov|semantic-release|pre-commit/i;
+
+/** Classifica un autore di commit: ritorna lo strumento AI o null. */
+export function classifyAiAuthor(name: string, email = ""): string | null {
+  const id = `${name} ${email}`;
+  if (AUTOMATION_BOTS.test(id)) return null;
+  for (const { pattern, tool } of AI_AUTHOR_PATTERNS) {
+    if (pattern.test(id)) return tool;
+  }
+  return null;
+}
+
+/** true se il messaggio di commit contiene firme esplicite di strumenti AI. */
+export function hasAiSignature(message: string): boolean {
+  return AI_SIGNATURE_PATTERNS.some((p) => p.test(message));
+}
+
+// Branch chiusi: i nomi sopravvivono nei merge commit anche quando il branch
+// è stato cancellato ("Merge pull request #N from owner/branch", "Merge branch 'x'").
+const MERGE_MESSAGE_PATTERNS = [
+  /^Merge pull request #\d+ from [^/\s]+\/(\S+)/,
+  /^Merge branch '([^']+)'/,
+  /^Merged in (\S+) \(pull request #\d+\)/, // Bitbucket
+];
+
+export function branchNamesFromMergeMessages(messages: string[]): string[] {
+  const names = new Set<string>();
+  for (const msg of messages) {
+    const firstLine = msg.split("\n")[0];
+    for (const p of MERGE_MESSAGE_PATTERNS) {
+      const m = firstLine.match(p);
+      if (m?.[1]) names.add(m[1]);
+    }
+  }
+  return [...names];
+}
+
+/** Branch sorgente delle PR/MR chiuse (sopravvivono alla cancellazione del branch). */
+async function fetchClosedPrBranches(ref: RepoRef): Promise<string[]> {
+  try {
+    const names = new Set<string>();
+    if (ref.provider === "github") {
+      const headers: Record<string, string> = {
+        "User-Agent": "ai-code-usage-analyzer",
+        Accept: "application/vnd.github+json",
+      };
+      if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+      for (let page = 1; page <= 2; page++) {
+        const res = await fetch(
+          `https://api.github.com/repos/${ref.owner}/${ref.repo}/pulls?state=closed&per_page=100&page=${page}`,
+          { headers }
+        );
+        if (!res.ok) break;
+        const batch = (await res.json()) as any[];
+        for (const pr of batch) if (pr.head?.ref) names.add(String(pr.head.ref));
+        if (batch.length < 100) break;
+      }
+    } else if (ref.provider === "gitlab") {
+      const headers: Record<string, string> = { "User-Agent": "ai-code-usage-analyzer" };
+      if (process.env.GITLAB_TOKEN) headers["PRIVATE-TOKEN"] = process.env.GITLAB_TOKEN;
+      const id = encodeURIComponent(`${ref.owner}/${ref.repo}`);
+      for (let page = 1; page <= 2; page++) {
+        const res = await fetch(
+          `https://gitlab.com/api/v4/projects/${id}/merge_requests?state=all&per_page=100&page=${page}`,
+          { headers }
+        );
+        if (!res.ok) break;
+        const batch = (await res.json()) as any[];
+        for (const mr of batch) if (mr.source_branch) names.add(String(mr.source_branch));
+        if (batch.length < 100) break;
+      }
+    } else {
+      let url: string | null =
+        `https://api.bitbucket.org/2.0/repositories/${ref.owner}/${ref.repo}/pullrequests?state=MERGED&state=DECLINED&state=SUPERSEDED&pagelen=50`;
+      for (let page = 0; page < 3 && url; page++) {
+        const res = await fetch(url, { headers: { "User-Agent": "ai-code-usage-analyzer" } });
+        if (!res.ok) break;
+        const data = (await res.json()) as any;
+        for (const pr of data.values ?? []) {
+          const n = pr.source?.branch?.name;
+          if (n) names.add(String(n));
+        }
+        url = data.next ?? null;
+      }
+    }
+    return [...names];
+  } catch {
+    return [];
+  }
 }
 
 async function fetchBranchNames(ref: RepoRef): Promise<string[] | null> {
@@ -103,6 +209,9 @@ function emptyAnalysis(): CommitAnalysis {
     source: null,
     totalBranches: null,
     aiBranches: [],
+    aiAuthors: [],
+    aiCommitRatio: 0,
+    blame: null,
     totalCommits: 0,
     truncated: false,
     authors: [],
@@ -117,6 +226,7 @@ function emptyAnalysis(): CommitAnalysis {
 interface RawCommit {
   sha: string;
   author: string;
+  email: string;
   date: string;
   message: string;
 }
@@ -140,6 +250,7 @@ async function fetchGitHubCommits(ref: RepoRef, branch: string): Promise<RawComm
       commits.push({
         sha: c.sha,
         author: c.commit?.author?.name ?? c.author?.login ?? "sconosciuto",
+        email: c.commit?.author?.email ?? "",
         date: c.commit?.author?.date ?? "",
         message: c.commit?.message ?? "",
       });
@@ -166,6 +277,7 @@ async function fetchGitLabCommits(ref: RepoRef, branch: string): Promise<RawComm
       commits.push({
         sha: c.id,
         author: c.author_name ?? "sconosciuto",
+        email: c.author_email ?? "",
         date: c.committed_date ?? c.created_at ?? "",
         message: [c.title, c.message].filter(Boolean).join("\n"),
       });
@@ -187,6 +299,7 @@ async function fetchBitbucketCommits(ref: RepoRef, branch: string): Promise<RawC
       commits.push({
         sha: c.hash,
         author: c.author?.user?.display_name ?? c.author?.raw?.replace(/<.*>/, "").trim() ?? "sconosciuto",
+        email: c.author?.raw?.match(/<([^>]+)>/)?.[1] ?? "",
         date: c.date ?? "",
         message: c.message ?? "",
       });
@@ -201,6 +314,7 @@ export async function analyzeCommits(ref: RepoRef, branch: string): Promise<Comm
   let raw: RawCommit[] = [];
   let source = "";
   let branchNames: string[] | null = null;
+  let allClosed: string[] = [];
   try {
     const commitsPromise =
       ref.provider === "github"
@@ -210,13 +324,26 @@ export async function analyzeCommits(ref: RepoRef, branch: string): Promise<Comm
           : fetchBitbucketCommits(ref, branch);
     source =
       ref.provider === "github" ? "GitHub API" : ref.provider === "gitlab" ? "GitLab API" : "Bitbucket API";
-    [raw, branchNames] = await Promise.all([commitsPromise, fetchBranchNames(ref)]);
+    let closedBranchNames: string[] = [];
+    [raw, branchNames, closedBranchNames] = await Promise.all([
+      commitsPromise,
+      fetchBranchNames(ref),
+      fetchClosedPrBranches(ref),
+    ]);
+    // I nomi dei branch cancellati sopravvivono anche nei merge commit.
+    closedBranchNames = [
+      ...new Set([...closedBranchNames, ...branchNamesFromMergeMessages(raw.map((c) => c.message))]),
+    ];
+    const activeSet = new Set(branchNames ?? []);
+    allClosed = closedBranchNames.filter((n) => !activeSet.has(n));
   } catch {
     return emptyAnalysis();
   }
 
-  const aiBranches = (branchNames ?? [])
-    .map(matchAiBranch)
+  const aiBranches: AiBranch[] = [
+    ...(branchNames ?? []).map((n) => matchAiBranch(n, "attivo")),
+    ...allClosed.map((n) => matchAiBranch(n, "chiuso")),
+  ]
     .filter((b): b is AiBranch => b !== null)
     .slice(0, 30);
 
@@ -225,27 +352,54 @@ export async function analyzeCommits(ref: RepoRef, branch: string): Promise<Comm
   }
 
   const authorCount = new Map<string, number>();
+  const aiAuthorTool = new Map<string, string>();
   const timeline = new Map<string, number>();
   const dayCount = new Map<string, number>();
   let generic = 0;
   let aiSigned = 0;
+  let aiCommits = 0;
 
   for (const c of raw) {
     authorCount.set(c.author, (authorCount.get(c.author) ?? 0) + 1);
+    const tool = classifyAiAuthor(c.author, c.email);
+    if (tool) aiAuthorTool.set(c.author, tool);
     const month = c.date.slice(0, 7);
     if (month) timeline.set(month, (timeline.get(month) ?? 0) + 1);
     const day = c.date.slice(0, 10);
     if (day) dayCount.set(day, (dayCount.get(day) ?? 0) + 1);
     const firstLine = c.message.split("\n")[0].trim();
     if (GENERIC_MESSAGE_PATTERNS.some((p) => p.test(firstLine))) generic++;
-    if (AI_SIGNATURE_PATTERNS.some((p) => p.test(c.message))) aiSigned++;
+    const signed = hasAiSignature(c.message);
+    if (signed) aiSigned++;
+    if (tool || signed) aiCommits++;
   }
+
+  const aiAuthors: AiAuthor[] = [...aiAuthorTool.entries()]
+    .map(([name, tool]) => ({ name, tool, commits: authorCount.get(name) ?? 0 }))
+    .sort((a, b) => b.commits - a.commits);
+  const aiCommitRatio = raw.length ? aiCommits / raw.length : 0;
 
   const anomalies: string[] = [];
   if (aiBranches.length > 0) {
     const tools = [...new Set(aiBranches.map((b) => b.tool))].join(", ");
+    const closed = aiBranches.filter((b) => b.state === "chiuso").length;
     anomalies.push(
-      `${aiBranches.length} branch con nomi tipici degli strumenti AI (${tools}): es. "${aiBranches[0].name}".`
+      `${aiBranches.length} branch con nomi tipici degli strumenti AI (${tools})` +
+        (closed > 0 ? `, di cui ${closed} già chiusi/cancellati` : "") +
+        `: es. "${aiBranches[0].name}".`
+    );
+  }
+  if (aiAuthors.length > 0) {
+    anomalies.push(
+      `${aiAuthors.length} autori di commit riconducibili a strumenti AI (${aiAuthors
+        .slice(0, 3)
+        .map((a) => `${a.name}: ${a.commits} commit`)
+        .join(", ")}).`
+    );
+  }
+  if (aiCommitRatio >= 0.3) {
+    anomalies.push(
+      `${Math.round(aiCommitRatio * 100)}% dei commit è attribuito ad autori AI o contiene firme AI nel messaggio.`
     );
   }
   if (aiSigned > 0) {
@@ -277,6 +431,9 @@ export async function analyzeCommits(ref: RepoRef, branch: string): Promise<Comm
     source,
     totalBranches: branchNames?.length ?? null,
     aiBranches,
+    aiAuthors,
+    aiCommitRatio,
+    blame: null,
     totalCommits: raw.length,
     truncated: raw.length >= MAX_COMMITS,
     authors: [...authorCount.entries()]

@@ -35,6 +35,8 @@ export interface FileAnalysis {
   reasons: string[];
   /** Motivazione fornita dal modello AI, se disponibile */
   aiReason: string | null;
+  /** Quota (0..1) di righe del file attribuite ad autori AI via git blame, se disponibile */
+  aiLineRatio: number | null;
   /** Suggerimenti di revisione manuale */
   suggestions: string[];
 }
@@ -65,6 +67,25 @@ export interface AiBranch {
   name: string;
   /** strumento AI riconosciuto dal prefisso del nome (es. "Claude", "Copilot") */
   tool: string;
+  /** "attivo" = branch ancora esistente; "chiuso" = ricavato da PR chiuse o merge commit */
+  state: "attivo" | "chiuso";
+}
+
+export interface AiAuthor {
+  name: string;
+  commits: number;
+  /** strumento/bot AI riconosciuto dal nome o dall'email dell'autore */
+  tool: string;
+}
+
+export interface BlameSummary {
+  /** true se il blame (autori delle righe) è stato eseguito */
+  available: boolean;
+  filesAnalyzed: number;
+  totalLines: number;
+  /** righe attribuite a commit di autori AI o con firme AI nel messaggio */
+  aiLines: number;
+  note: string | null;
 }
 
 export interface CommitAnalysis {
@@ -72,8 +93,14 @@ export interface CommitAnalysis {
   source: string | null; // es. "GitHub API"
   /** Numero totale di branch del repository (null se non recuperabile) */
   totalBranches: number | null;
-  /** Branch con nomi tipici degli strumenti AI (claude/…, copilot/…, codex/…) */
+  /** Branch (attivi o chiusi) con nomi tipici degli strumenti AI (claude/…, copilot/…, codex/…) */
   aiBranches: AiBranch[];
+  /** Autori dei commit riconducibili a strumenti/bot AI */
+  aiAuthors: AiAuthor[];
+  /** Quota (0..1) di commit firmati da autori AI o con firme AI nel messaggio */
+  aiCommitRatio: number;
+  /** Analisi git blame (autori delle righe) sui file più sospetti, se disponibile */
+  blame: BlameSummary | null;
   totalCommits: number;
   truncated: boolean;
   authors: { name: string; commits: number }[];

@@ -30,17 +30,26 @@ export function exportCsv(report: AnalysisReport) {
     ["Righe analizzate", report.totalLines],
     ["Analisi AI (OpenRouter)", report.aiAnalysisUsed ? `sì (${report.aiModel})` : "no (solo analisi statica)"],
     [
-      "Branch con nomi da strumenti AI",
-      report.commitAnalysis.aiBranches.map((b) => `${b.name} (${b.tool})`).join(" | ") || "nessuno rilevato",
+      "Branch con nomi da strumenti AI (inclusi chiusi)",
+      report.commitAnalysis.aiBranches
+        .map((b) => `${b.name} (${b.tool}${b.state === "chiuso" ? ", chiuso" : ""})`)
+        .join(" | ") || "nessuno rilevato",
     ],
+    [
+      "Autori di commit riconducibili ad AI",
+      report.commitAnalysis.aiAuthors.map((a) => `${a.name} (${a.tool}, ${a.commits} commit)`).join(" | ") ||
+        "nessuno rilevato",
+    ],
+    ["Commit da autori AI o con firma AI (%)", Math.round(report.commitAnalysis.aiCommitRatio * 100)],
     [],
-    ["Percorso", "Linguaggio", "Righe", "Score statico", "Score AI", "Score finale", "Rischio", "Motivazioni"],
+    ["Percorso", "Linguaggio", "Righe", "Score statico", "Score AI", "Righe da AI (blame) %", "Score finale", "Rischio", "Motivazioni"],
     ...report.files.map((f) => [
       f.path,
       f.language,
       f.lines,
       f.staticScore,
       f.aiScore ?? "",
+      f.aiLineRatio !== null ? Math.round(f.aiLineRatio * 100) : "",
       f.score,
       f.risk,
       f.reasons.join(" | "),
@@ -123,10 +132,25 @@ export async function exportPdf(report: AnalysisReport) {
         ["Messaggi generici", `${Math.round(report.commitAnalysis.genericMessageRatio * 100)}%`],
         ["Commit con firma AI", String(report.commitAnalysis.aiSignedCommits)],
         [
-          "Branch con nomi da strumenti AI",
+          "Branch con nomi da strumenti AI (inclusi chiusi)",
           report.commitAnalysis.aiBranches.length > 0
-            ? report.commitAnalysis.aiBranches.map((b) => `${b.name} (${b.tool})`).join("\n")
+            ? report.commitAnalysis.aiBranches
+                .map((b) => `${b.name} (${b.tool}${b.state === "chiuso" ? ", chiuso" : ""})`)
+                .join("\n")
             : `0${report.commitAnalysis.totalBranches !== null ? ` su ${report.commitAnalysis.totalBranches}` : ""}`,
+        ],
+        [
+          "Autori di commit riconducibili ad AI",
+          report.commitAnalysis.aiAuthors.length > 0
+            ? report.commitAnalysis.aiAuthors.map((a) => `${a.name} (${a.tool}, ${a.commits} commit)`).join("\n")
+            : "nessuno rilevato",
+        ],
+        ["Commit da autori AI o con firma AI", `${Math.round(report.commitAnalysis.aiCommitRatio * 100)}%`],
+        [
+          "Autori delle righe (git blame)",
+          report.commitAnalysis.blame?.available
+            ? `${report.commitAnalysis.blame.aiLines} righe su ${report.commitAnalysis.blame.totalLines} attribuite ad AI (${report.commitAnalysis.blame.filesAnalyzed} file analizzati)`
+            : report.commitAnalysis.blame?.note ?? "non eseguito",
         ],
         ["Anomalie", report.commitAnalysis.anomalies.join("\n") || "nessuna rilevata"],
       ],
