@@ -155,25 +155,30 @@ const namingPatterns: Indicator = (content, stats) => {
   const idRegex = /\b(?:function|def|const|let|var|class|fn|func)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
   let m: RegExpExecArray | null;
   while ((m = idRegex.exec(content)) !== null) identifiers.add(m[1]);
-  if (identifiers.size < 4) {
+  if (identifiers.size < 3) {
     return { id: "naming", label: "Nomi standardizzati", value: 0.25, detail: "pochi identificatori dichiarati nel file" };
   }
+  // Schema verbo+oggetto perfettamente convenzionale (create_user, validateInput…)
+  const verbPrefix =
+    /^(get|set|create|update|delete|validate|process|handle|format|filter|fetch|parse|build|compute|calculate|is|has|render|load|save|init|make|check|convert|generate)(_|[A-Z]|$)/;
   let standard = 0;
+  let verbNamed = 0;
   let descriptiveLong = 0;
   for (const id of identifiers) {
     const lower = id.toLowerCase();
-    if (STANDARD_AI_NAMES.has(lower)) standard++;
-    // Nomi lunghi perfettamente descrittivi (getUserProfileData, calculateTotalPrice…)
     const words = id.split(/(?=[A-Z])|_/).filter(Boolean);
+    if (STANDARD_AI_NAMES.has(lower)) standard++;
+    else if (verbPrefix.test(id) && words.length >= 2) verbNamed++;
+    // Nomi lunghi perfettamente descrittivi (getUserProfileData, calculateTotalPrice…)
     if (words.length >= 3 && id.length >= 16) descriptiveLong++;
   }
-  const ratio = (standard + descriptiveLong * 0.7) / identifiers.size;
-  const value = clamp01(ratio / 0.5);
+  const ratio = (standard + verbNamed * 0.6 + descriptiveLong * 0.4) / identifiers.size;
+  const value = clamp01(ratio / 0.55);
   return {
     id: "naming",
     label: "Nomi standardizzati",
     value,
-    detail: `${standard} nomi generici e ${descriptiveLong} nomi lunghi perfettamente descrittivi su ${identifiers.size} identificatori`,
+    detail: `${standard} nomi generici, ${verbNamed} nomi verbo+oggetto convenzionali e ${descriptiveLong} nomi lunghi perfettamente descrittivi su ${identifiers.size} identificatori`,
   };
 };
 
@@ -285,11 +290,15 @@ const scholasticStructure: Indicator = (content, stats) => {
       funcs++;
       const prev = (lines[i - 1] ?? "").trim();
       const prev2 = (lines[i - 2] ?? "").trim();
+      const next = (lines[i + 1] ?? "").trim();
       if (
         COMMENT_PREFIXES.some((p) => prev.startsWith(p)) ||
         prev.endsWith("*/") ||
         prev2.startsWith("/**") ||
-        prev.startsWith('"""')
+        prev.startsWith('"""') ||
+        // Convenzione Python: docstring subito dopo la firma della funzione
+        next.startsWith('"""') ||
+        next.startsWith("'''")
       ) {
         funcsWithCommentAbove++;
       }
@@ -304,7 +313,7 @@ const scholasticStructure: Indicator = (content, stats) => {
     id: "scholastic",
     label: "Struttura scolastica/didascalica",
     value,
-    detail: `${funcsWithCommentAbove} funzioni su ${funcs} precedute da un commento descrittivo`,
+    detail: `${funcsWithCommentAbove} funzioni su ${funcs} corredate da commento o docstring descrittivi`,
   };
 };
 
@@ -374,7 +383,13 @@ export function analyzeFile(path: string, content: string, language: string): Fi
 
   const totalWeight = indicators.reduce((a, i) => a + i.weight, 0);
   const weighted = indicators.reduce((a, i) => a + i.value * i.weight, 0);
-  const staticScore = Math.round((weighted / totalWeight) * 100);
+  const mean01 = weighted / totalWeight;
+  // La media pesata da sola diluisce i segnali: quando più indicatori forti
+  // concordano, la probabilità che il file sia AI cresce più che linearmente.
+  const strong = indicators.filter((i) => i.value >= 0.6).length;
+  const moderate = indicators.filter((i) => i.value >= 0.4 && i.value < 0.6).length;
+  const boost = Math.min(0.55, 0.13 * strong + 0.05 * moderate);
+  const staticScore = Math.round((mean01 + (1 - mean01) * boost) * 100);
 
   const sorted = [...indicators].sort((a, b) => b.value * b.weight - a.value * a.weight);
   const reasons = sorted

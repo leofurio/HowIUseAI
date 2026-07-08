@@ -79,7 +79,7 @@ function computeConfidence(
 }
 
 /** Applica i segnali della cronologia commit come correttivo dello score complessivo. */
-function commitAdjustment(commitAnalysis: CommitAnalysis): number {
+function commitAdjustment(commitAnalysis: CommitAnalysis, totalLines: number): number {
   let adj = 0;
   // I branch con nomi da AI tool (anche chiusi) sono un segnale forte pure
   // quando la cronologia commit non è disponibile.
@@ -95,8 +95,34 @@ function commitAdjustment(commitAnalysis: CommitAnalysis): number {
     adj += Math.round(Math.min(12, commitAnalysis.aiCommitRatio * 20));
   }
   if (commitAnalysis.genericMessageRatio > 0.5) adj += 4;
+  // Generazione massiva: molte righe arrivate in pochissimi commit.
+  if (commitAnalysis.totalCommits > 0 && totalLines > 0) {
+    const linesPerCommit = totalLines / commitAnalysis.totalCommits;
+    if (commitAnalysis.totalCommits <= 5 && totalLines > 800) adj += 8;
+    else if (linesPerCommit > 1500) adj += 8;
+    else if (linesPerCommit > 500) adj += 5;
+  }
   if (commitAnalysis.anomalies.some((a) => a.includes("massiva"))) adj += 4;
-  return Math.min(25, adj);
+  return Math.min(30, adj);
+}
+
+/**
+ * Percentuale complessiva stimata di codice AI: media pesata sulle righe,
+ * corretta con la coda alta della distribuzione (se gran parte dei file ha
+ * score alto, la media non deve diluirla) e con i segnali della cronologia.
+ */
+function computeAiPercent(files: FileAnalysis[], commitAnalysis: CommitAnalysis): number {
+  const totalLines = files.reduce((a, f) => a + f.lines, 0);
+  const weightedScore = totalLines
+    ? files.reduce((a, f) => a + f.score * f.lines, 0) / totalLines
+    : 0;
+  let base = weightedScore;
+  if (files.length >= 4) {
+    const sorted = files.map((f) => f.score).sort((a, b) => a - b);
+    const p75 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.75))];
+    base = Math.max(weightedScore, (weightedScore + p75) / 2);
+  }
+  return Math.min(100, Math.round(base + commitAdjustment(commitAnalysis, totalLines)));
 }
 
 /**
@@ -105,11 +131,7 @@ function commitAdjustment(commitAnalysis: CommitAnalysis): number {
  * modificano gli score dei file (es. analisi git blame).
  */
 export function recomputeReportAggregates(report: AnalysisReport): void {
-  const totalLines = report.files.reduce((a, f) => a + f.lines, 0);
-  const weightedScore = totalLines
-    ? report.files.reduce((a, f) => a + f.score * f.lines, 0) / totalLines
-    : 0;
-  report.aiPercent = Math.min(100, Math.round(weightedScore + commitAdjustment(report.commitAnalysis)));
+  report.aiPercent = computeAiPercent(report.files, report.commitAnalysis);
   report.manualPercent = 100 - report.aiPercent;
   report.languages = aggregate(report.files, (f) => f.language as string).map((e) => ({
     language: e.key,
@@ -206,11 +228,17 @@ export async function analyzeZip(zipData: ArrayBuffer, options: AnalyzeOptions):
   onProgress("Generazione del report", 92);
   const totalLines = files.reduce((a, f) => a + f.lines, 0);
 
-  // Percentuale complessiva: media degli score pesata sulle righe + correttivo commit.
-  const weightedScore = totalLines
-    ? files.reduce((a, f) => a + f.score * f.lines, 0) / totalLines
-    : 0;
-  const aiPercent = Math.min(100, Math.round(weightedScore + commitAdjustment(commitAnalysis)));
+  // Anomalia "generazione massiva": molte righe in pochissimi commit.
+  if (commitAnalysis.available && commitAnalysis.totalCommits > 0 && totalLines > 800) {
+    const linesPerCommit = Math.round(totalLines / commitAnalysis.totalCommits);
+    if (commitAnalysis.totalCommits <= 5 || linesPerCommit > 500) {
+      commitAnalysis.anomalies.push(
+        `${totalLines.toLocaleString("it-IT")} righe di codice in ${commitAnalysis.totalCommits} commit (~${linesPerCommit} righe/commit): volume compatibile con generazione massiva.`
+      );
+    }
+  }
+
+  const aiPercent = computeAiPercent(files, commitAnalysis);
 
   const languages: LanguageStat[] = aggregate(files, (f) => f.language as string).map((e) => ({
     language: e.key,
